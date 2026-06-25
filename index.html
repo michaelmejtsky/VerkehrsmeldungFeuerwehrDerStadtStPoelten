@@ -13,7 +13,7 @@
 
     iframe {
       position: fixed; inset: 0; width: 100%; height: 100%;
-      border: none; display: block; background: #000;
+      border: none; display: block; background: #000; z-index: 1;
     }
 
     #offlineFallback {
@@ -78,6 +78,16 @@
       font-weight: 800; cursor: pointer;
       background: #00eaff; color: #06122b;
     }
+
+    #statusDebug {
+      position: fixed; left: 14px; bottom: 14px; z-index: 1000001;
+      display: none; max-width: 560px;
+      background: rgba(0,0,0,.78); color: #00eaff;
+      border: 1px solid rgba(0,234,255,.55);
+      border-radius: 12px; padding: 12px 14px;
+      font-size: 13px; line-height: 1.45; text-align: left;
+      font-family: Consolas, monospace; word-break: break-all;
+    }
   </style>
 </head>
 
@@ -106,24 +116,25 @@
     <button onclick="showOfflineTest()">Offline testen</button>
     <button onclick="endOfflineTest()">Zurück</button>
     <button onclick="reloadFrame()">Neu laden</button>
+    <button onclick="checkGlobalFallbackStatus()">Status prüfen</button>
   </div>
+
+  <div id="statusDebug">Statusdiagnose wird geladen …</div>
 
   <script>
     const APP_URL = "https://script.google.com/a/macros/feuerwehr-stpoelten.at/s/AKfycbytz6KJRsOzfrO-vcwIvKXRJL7szOJdZC0S8X5XaSRTwonfSGn-8FdoH6u2VLURR9iVyQ/exec";
-
-    // Zentraler Schalter:
-    // normal: { "fallback": false }
-    // test:   { "fallback": true }
     const GLOBAL_STATUS_URL = "https://michaelmejtsky.github.io/FFSTP-Status/status.json";
 
     const frame = document.getElementById("infoscreenFrame");
     const offline = document.getElementById("offlineFallback");
     const last = document.getElementById("lastConnection");
     const debugPanel = document.getElementById("debugPanel");
+    const statusDebug = document.getElementById("statusDebug");
 
     let offlineTest = false;
     let globalFallbackActive = false;
     let lastSuccess = new Date();
+    let debugMode = false;
 
     function formatDateTime(date) {
       return date.toLocaleString("de-AT", {
@@ -138,18 +149,21 @@
 
     function showOffline() {
       offline.style.display = "flex";
+      frame.style.display = "none";
       updateTime();
     }
 
     function hideOffline() {
       if (offlineTest || globalFallbackActive) return;
       offline.style.display = "none";
+      frame.style.display = "block";
       lastSuccess = new Date();
       updateTime();
     }
 
     function reloadFrame() {
       if (offlineTest || globalFallbackActive) return;
+      frame.style.display = "block";
       frame.src = APP_URL + "?reload=" + Date.now();
     }
 
@@ -161,26 +175,56 @@
     function endOfflineTest() {
       offlineTest = false;
       globalFallbackActive = false;
-      hideOffline();
+      offline.style.display = "none";
+      frame.style.display = "block";
+      lastSuccess = new Date();
+      updateTime();
       reloadFrame();
     }
 
+    function setDebug(text) {
+      if (!debugMode) return;
+      statusDebug.style.display = "block";
+      statusDebug.innerHTML = text;
+    }
+
     async function checkGlobalFallbackStatus() {
+      const url = GLOBAL_STATUS_URL + "?nocache=" + Date.now();
+
       try {
-        const response = await fetch(GLOBAL_STATUS_URL + "?t=" + Date.now(), {
-          cache: "no-store"
-        });
+        setDebug("Prüfe Status…<br>URL: " + url);
 
-        const status = await response.json();
+        const response = await fetch(url, { cache: "no-store" });
+        const text = await response.text();
+        const lower = text.toLowerCase();
 
-        if (status.fallback === true) {
+        const fallbackIsTrue = lower.includes("fallback") && lower.includes("true");
+
+        setDebug(
+          "HTTP: " + response.status + "<br>" +
+          "fallback erkannt: " + fallbackIsTrue + "<br>" +
+          "globalFallbackActive: " + globalFallbackActive + "<br>" +
+          "offlineTest: " + offlineTest + "<br>" +
+          "Antwort:<br>" + text.replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        );
+
+        if (fallbackIsTrue) {
           globalFallbackActive = true;
           showOffline();
-        } else {
-          globalFallbackActive = false;
-          if (!offlineTest && navigator.onLine) hideOffline();
+          return;
         }
+
+        globalFallbackActive = false;
+
+        if (!offlineTest && navigator.onLine) {
+          offline.style.display = "none";
+          frame.style.display = "block";
+          lastSuccess = new Date();
+          updateTime();
+        }
+
       } catch (err) {
+        setDebug("Fetch Fehler:<br>" + String(err));
         console.log("Globaler Status konnte nicht geprüft werden:", err);
       }
     }
@@ -189,9 +233,7 @@
       setTimeout(hideOffline, 1200);
     });
 
-    window.addEventListener("offline", function () {
-      showOffline();
-    });
+    window.addEventListener("offline", showOffline);
 
     window.addEventListener("online", function () {
       reloadFrame();
@@ -210,12 +252,14 @@
 
     const params = new URLSearchParams(window.location.search);
 
-    if (params.has("offline") || params.has("testoffline") || params.get("test") === "offline") {
-      showOfflineTest();
+    if (params.has("debug") || params.get("debug") === "1") {
+      debugMode = true;
+      debugPanel.style.display = "flex";
+      statusDebug.style.display = "block";
     }
 
-    if (params.has("debug") || params.get("debug") === "1") {
-      debugPanel.style.display = "flex";
+    if (params.has("offline") || params.has("testoffline") || params.get("test") === "offline") {
+      showOfflineTest();
     }
 
     updateTime();
